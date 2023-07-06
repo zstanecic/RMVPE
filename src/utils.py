@@ -1,8 +1,8 @@
 import sys
-from functools import reduce
 import numpy as np
-
-
+import librosa
+from functools import reduce
+from .constants import *
 from torch.nn.modules.module import _addindent
 
 
@@ -57,8 +57,8 @@ def summary(model, file=sys.stdout):
 
     return count
 
-
-def to_local_average_cents(salience, center=None, thred=0.0):
+    
+def to_local_average_cents(salience, center=None, thred=0.05):
     """
     find the weighted average cents near the argmax bin
     """
@@ -66,7 +66,7 @@ def to_local_average_cents(salience, center=None, thred=0.0):
     if not hasattr(to_local_average_cents, 'cents_mapping'):
         # the bin number-to-cents mapping
         to_local_average_cents.cents_mapping = (
-                np.linspace(0, 7180, 360) + 1997.3794084376191)
+                20 * np.arange(N_CLASS) + CONST)
 
     if salience.ndim == 1:
         if center is None:
@@ -83,3 +83,22 @@ def to_local_average_cents(salience, center=None, thred=0.0):
                          range(salience.shape[0])])
 
     raise Exception("label should be either 1d or 2d ndarray")
+
+def to_viterbi_cents(salience, thred=0.05):
+    # Create viterbi transition matrix
+    if not hasattr(to_viterbi_cents, 'transition'):
+        xx, yy = np.meshgrid(range(N_CLASS), range(N_CLASS))
+        transition = np.maximum(30 - abs(xx - yy), 0)
+        transition = transition / transition.sum(axis=1, keepdims=True)
+        to_viterbi_cents.transition = transition
+
+    # Convert to probability
+    prob = salience.T
+    prob = prob / prob.sum(axis=0)    
+
+    # Perform viterbi decoding
+    path = librosa.sequence.viterbi(prob, to_viterbi_cents.transition).astype(np.int64)
+
+    return np.array([to_local_average_cents(salience[i, :], path[i], thred) for i in
+                     range(len(path))])
+                     

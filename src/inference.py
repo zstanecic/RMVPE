@@ -1,79 +1,53 @@
 import numpy as np
 import torch
+import torch.nn.functional as F
+from torchaudio.transforms import Resample
+from .constants import *
+from .model import E2E0
+from .spec import MelSpectrogram 
+from .utils import to_local_average_cents, to_viterbi_cents
 
+class RMVPE:
+    def __init__(self, model_path, hop_length=160):
+        self.resample_kernel = {}
+        model = E2E0(4, 1, (2, 2))
+        ckpt = torch.load(model_path)
+        model.load_state_dict(ckpt['model'])
+        model.eval()
+        self.model = model
+        self.mel_extractor = MelSpectrogram(N_MELS, SAMPLE_RATE, WINDOW_LENGTH, hop_length, None, MEL_FMIN, MEL_FMAX)
+        self.resample_kernel = {}
 
-class Inference:
-    def __init__(self, model, seg_len, seg_frames, hop_length, batch_size, device):
-        super(Inference, self).__init__()
-        self.model = model.eval()
-        self.seg_len = seg_len
-        self.seg_frames = seg_frames
-        self.batch_size = batch_size
-        self.hop_length = hop_length
-        self.device = device
-
-    def inference(self, audio):
+    def mel2hidden(self, mel):
         with torch.no_grad():
-            padded_audio = self.pad_audio(audio)
-            segments = self.en_frame(padded_audio)
-            hidden_vec_segments, out_segments = self.forward_in_mini_batch(self.model, segments)
-            out_segments = self.de_frame(out_segments, type_seg='pitch')[:(len(audio) // self.hop_length + 1)]
-            hidden_vec_segments = self.de_frame(hidden_vec_segments, type_seg='pitch')[:(len(audio) // self.hop_length + 1)]
-            return hidden_vec_segments, out_segments
+            n_frames = mel.shape[-1]
+            mel = F.pad(mel, (0, 32 * ((n_frames - 1) // 32 + 1) - n_frames), mode='reflect')
+            hidden = self.model(mel)
+            return hidden[:, :n_frames]
 
-    def pad_audio(self, audio):
-        audio_len = len(audio)
-        seg_nums = int(np.ceil(audio_len / self.seg_len)) + 1
-        pad_len = seg_nums * self.seg_len - audio_len + self.seg_len // 2
-        padded_audio = torch.cat([torch.zeros(self.seg_len // 4).to(self.device), audio,
-                                  torch.zeros(pad_len - self.seg_len // 4).to(self.device)])
-        return padded_audio
-
-    def en_frame(self, audio):
-        audio_len = len(audio)
-        assert audio_len % (self.seg_len // 2) == 0
-
-        audio = torch.cat([torch.zeros(1024).to(self.device), audio, torch.zeros(1024).to(self.device)])
-        segments = []
-        start = 0
-        while start + self.seg_len <= audio_len:
-            segments.append(audio[start:start + self.seg_len + 2048])
-            start += self.seg_len // 2
-        segments = torch.stack(segments, dim=0)
-        return segments
-
-    def forward_in_mini_batch(self, model, segments):
-        hidden_vec_segments = []
-        out_segments = []
-        segments_num = segments.shape[0]
-        batch_start = 0
-        while True:
-            # print('#', end='\t')
-            if batch_start + self.batch_size >= segments_num:
-                batch_tmp = segments[batch_start:].shape[0]
-                segment_in = torch.cat([segments[batch_start:],
-                                        torch.zeros_like(segments)[:self.batch_size-batch_tmp].to(self.device)], dim=0)
-                hidden_vec, out_tmp = model(segment_in)
-                hidden_vec_segments.append(hidden_vec[:batch_tmp])
-                out_segments.append(out_tmp[:batch_tmp])
-                break
-            else:
-                segment_in = segments[batch_start:batch_start+self.batch_size]
-                hidden_vec, out_tmp = model(segment_in)
-                hidden_vec_segments.append(hidden_vec)
-                out_segments.append(out_tmp)
-            batch_start += self.batch_size
-        hidden_vec_segments = torch.cat(hidden_vec_segments, dim=0)
-        out_segments = torch.cat(out_segments, dim=0)
-        return hidden_vec_segments, out_segments
-
-    def de_frame(self, segments, type_seg='audio'):
-        output = []
-        if type_seg == 'audio':
-            for segment in segments:
-                output.append(segment[self.seg_len // 4: int(self.seg_len * 0.75)])
+    def decode(self, hidden, thred=0.03, use_viterbi=False):
+        if use_viterbi:
+            cents_pred = to_viterbi_cents(hidden, thred=thred)
         else:
-            for segment in segments:
-                output.append(segment[self.seg_frames // 4: int(self.seg_frames * 0.75)])
-        output = torch.cat(output, dim=0)
-        return output
+            cents_pred = to_local_average_cents(hidden, thred=thred)
+        f0 = np.array([10 * (2 ** (cent_pred / 1200)) if cent_pred else 0 for cent_pred in cents_pred])
+        return f0
+
+    def infer_from_audio(self, audio, sample_rate=16000, device=None, thred=0.03, use_viterbi=False):
+        if device is None:
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        audio = torch.from_numpy(audio).float().unsqueeze(0).to(device)
+        if sample_rate == 16000:
+            audio_res = audio
+        else:
+            key_str = str(sample_rate)
+            if key_str not in self.resample_kernel:
+                self.resample_kernel[key_str] = Resample(sample_rate, 16000, lowpass_filter_width=128)
+            self.resample_kernel[key_str] = self.resample_kernel[key_str].to(device)
+            audio_res = self.resample_kernel[key_str](audio)
+        mel_extractor = self.mel_extractor.to(device)
+        self.model = self.model.to(device)
+        mel = mel_extractor(audio_res, center=True)
+        hidden = self.mel2hidden(mel)
+        f0 = self.decode(hidden.squeeze(0).cpu().numpy(), thred=thred, use_viterbi=use_viterbi)
+        return f0

@@ -12,23 +12,13 @@ import torch.nn.functional as F
 def evaluate(dataset, model, hop_length, device, pitch_th=0.0):
     metrics = defaultdict(list)
     for data in dataset:
-        audio = data['audio'].to(device)
+        mel = data['mel'].to(device)
+        n_frames = mel.shape[-1]
+        mel = F.pad(mel, (0, 32 * ((n_frames - 1) // 32 + 1) - n_frames), mode='reflect')
+        pitch_pred = model(mel.unsqueeze(0)).squeeze(0)
+        
         pitch_label = data['pitch'].to(device)
-        pitch_pred = torch.zeros_like(pitch_label)
-        slices = range(0, pitch_pred.shape[0], 128)
-        for start_steps in slices:
-            end_steps = start_steps + 127
-            start = int(start_steps * hop_length * SAMPLE_RATE / 1000)
-            end = int(end_steps * hop_length * SAMPLE_RATE / 1000) + WINDOW_LENGTH
-            if end_steps >= pitch_pred.shape[0]:
-                t_audio = F.pad(audio[start:end], (0, end - start - len(audio[start:end])), mode='constant')
-                t_pitch_pred = model(t_audio.reshape((-1, t_audio.shape[-1]))).squeeze(0)
-                pitch_pred[start_steps:end_steps + 1] = t_pitch_pred[:pitch_pred.shape[0] - end_steps - 1]
-            else:
-                t_audio = audio[start:end]
-                t_pitch_pred = model(t_audio.reshape((-1, t_audio.shape[-1]))).squeeze(0)
-                pitch_pred[start_steps:end_steps + 1] = t_pitch_pred
-
+        pitch_pred = pitch_pred[ : pitch_label.shape[0]]
         loss = bce(pitch_pred, pitch_label)
         metrics['loss'].append(loss.item())
 
@@ -42,7 +32,7 @@ def evaluate(dataset, model, hop_length, device, pitch_th=0.0):
         freq_pred = np.array([10 * (2 ** (cent_pred / 1200)) if cent_pred else 0 for cent_pred in cents_pred])
         freq = np.array([10 * (2 ** (cent / 1200)) if cent else 0 for cent in cents_label])
 
-        time_slice = np.array([i*hop_length/1000 for i in range(len(cents_label))])
+        time_slice = np.array([i*hop_length*1000/SAMPLE_RATE for i in range(len(cents_label))])
         ref_v, ref_c, est_v, est_c = to_cent_voicing(time_slice, freq, time_slice, freq_pred)
 
         rpa = raw_pitch_accuracy(ref_v, ref_c, est_v, est_c)
