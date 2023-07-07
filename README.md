@@ -1,6 +1,7 @@
 # RMVPE
 ## 1. 训练
 数据集是我处理过的 mir1k 和 ptdb 混合数据集, 统一精度到 10ms 一帧
+
 训练集放到`Hybrid/train`目录下
 
 测试集放到`Hybrid/test`目录下
