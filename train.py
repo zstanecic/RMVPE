@@ -24,13 +24,13 @@ def train():
     clip_grad_norm = 3
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    train_dataset = MIR1K('Hybrid', hop_length, ['train'], whole_audio=False, use_aug=True)
+    train_dataset = MIR1K('Hybrid', hop_length, ['mir1k+ptdb', 'm4singer-resynth'], whole_audio=False, use_aug=True)
     validation_dataset = MIR1K('Hybrid', hop_length, ['test'], whole_audio=True, use_aug=False)
 
     data_loader = DataLoader(train_dataset, batch_size, shuffle=True, drop_last=True, pin_memory=True, persistent_workers=True, num_workers=2)
     
-    iterations = 100000
-    learning_rate_decay_steps = 1000
+    iterations = 200000
+    learning_rate_decay_steps = 2000
     learning_rate_decay_rate = 0.98
     resume_iteration = None
 
@@ -39,13 +39,13 @@ def train():
     
     model = E2E0(4, 1, (2, 2)).to(device)
     if resume_iteration is None:
-        optimizer = torch.optim.Adam(model.parameters(), learning_rate)
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
         resume_iteration = 0
     else:
         model_path = os.path.join(logdir, f'model_{resume_iteration}.pt')
         ckpt = torch.load(model_path, map_location=torch.device(device))
         model.load_state_dict(ckpt['model'])
-        optimizer = torch.optim.Adam(model.parameters(), learning_rate)
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     scheduler = StepLR(optimizer, step_size=learning_rate_decay_steps, gamma=learning_rate_decay_rate)
     summary(model)
