@@ -24,7 +24,7 @@ def train():
     clip_grad_norm = 3
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    train_dataset = MIR1K('Hybrid', hop_length, ['mir1k+ptdb', 'm4singer-resynth'], whole_audio=False, use_aug=True)
+    train_dataset = MIR1K('Hybrid', hop_length, ['train'], whole_audio=False, use_aug=True)
     validation_dataset = MIR1K('Hybrid', hop_length, ['test'], whole_audio=True, use_aug=False)
 
     data_loader = DataLoader(train_dataset, batch_size, shuffle=True, drop_last=True, pin_memory=True, persistent_workers=True, num_workers=2)
