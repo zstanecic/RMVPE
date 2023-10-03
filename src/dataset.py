@@ -60,7 +60,7 @@ class MIR1K(Dataset):
                 noise = 0
             else:
                 noise = data_buffer['noise'][start_id : end_id]
-            audio_aug = audio
+            audio_aug = audio + noise
             
         mel = self.mel(audio_aug.unsqueeze(0), keyshift = key_shift, center=False).squeeze(0)
         cent = data_buffer['cent'][start_frame : end_frame] + 1200 * np.log2(win_length_new / WINDOW_LENGTH)
