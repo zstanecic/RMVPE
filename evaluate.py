@@ -9,7 +9,7 @@ from mir_eval.melody import voicing_recall, voicing_false_alarm
 import torch.nn.functional as F
 
 
-def evaluate(dataset, model, hop_length, device, pitch_th=0.0):
+def evaluate(dataset, model, hop_length, device, pitch_th=0.03):
     metrics = defaultdict(list)
     for data in dataset:
         mel = data['mel'].to(device)

@@ -31,11 +31,11 @@ class MIR1K(Dataset):
         audio_path = self.paths[index]
         data_buffer = self.data_buffer[audio_path]
         
-        start_frame = 0 if self.whole_audio else random.randint(0, data_buffer['len'] - 128)
+        start_frame = 0 if self.whole_audio else random.randint(1, data_buffer['len'] - 128)
         end_frame = data_buffer['len'] if self.whole_audio else start_frame + 128
         
         if self.use_aug:
-            key_shift = random.uniform(0, 12)
+            key_shift = random.uniform(0, 5)
         else:
             key_shift = 0
         factor = 2 ** (key_shift / 12)
@@ -47,10 +47,10 @@ class MIR1K(Dataset):
         if self.use_aug:
             if data_buffer['noise'] is None:
                 noise = cn.powerlaw_psd_gaussian(random.uniform(0, 2), len(audio))
-                noise = 0.1 * torch.from_numpy(noise).float()
+                noise = torch.from_numpy(noise).float() * (10 ** random.uniform(-6, -1))
             else:
-                noise = data_buffer['noise'][start_id : end_id]
-            audio_aug = audio + random.uniform(-1, 1) * noise
+                noise = random.uniform(-1, 1) * data_buffer['noise'][start_id : end_id]
+            audio_aug = audio + noise
             max_amp = float(torch.max(torch.abs(audio_aug))) + 1e-5
             max_shift = min(1, np.log10(1 / max_amp))
             log10_vol_shift = random.uniform(-1, max_shift)
@@ -60,7 +60,7 @@ class MIR1K(Dataset):
                 noise = 0
             else:
                 noise = data_buffer['noise'][start_id : end_id]
-            audio_aug = audio + noise
+            audio_aug = audio
             
         mel = self.mel(audio_aug.unsqueeze(0), keyshift = key_shift, center=False).squeeze(0)
         cent = data_buffer['cent'][start_frame : end_frame] + 1200 * np.log2(win_length_new / WINDOW_LENGTH)
